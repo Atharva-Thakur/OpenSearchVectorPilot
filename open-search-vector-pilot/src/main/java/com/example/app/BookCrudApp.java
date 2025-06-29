@@ -17,17 +17,32 @@ import org.opensearch.action.search.SearchResponse;
 import org.opensearch.search.SearchHit;
 import org.opensearch.search.builder.SearchSourceBuilder;
 import org.opensearch.index.query.QueryBuilders;
+import com.fasterxml.jackson.core.json.JsonReadFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
+import org.opensearch.client.indices.CreateIndexRequest;
+import org.opensearch.client.indices.GetIndexRequest;
+import org.opensearch.client.indices.CreateIndexResponse;
+import org.opensearch.common.settings.Settings;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+import org.opensearch.action.bulk.BulkRequest;
+import org.opensearch.action.bulk.BulkResponse;
 import java.util.Scanner;
 
 public class BookCrudApp {
-    private static final String INDEX = "books-index";
+    private static final String INDEX = "vector-books-index";
+    private static final int EMBEDDING_DIM = 384;
+    private static final String[] SEARCHABLE_FIELDS = {"author", "title"};
     private final RestHighLevelClient client;
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper = JsonMapper.builder()
+                .enable(JsonReadFeature.ALLOW_NON_NUMERIC_NUMBERS)
+                .build();
 
     public BookCrudApp() {
         this.client = new RestHighLevelClient(
@@ -43,19 +58,65 @@ public class BookCrudApp {
         }
     }
 
+    public void createIndexIfNotExists() {
+        try {
+            GetIndexRequest getIndexRequest = new GetIndexRequest(INDEX);
+            boolean exists = client.indices().exists(getIndexRequest, RequestOptions.DEFAULT);
+            if (!exists) {
+                CreateIndexRequest request = new CreateIndexRequest(INDEX);
+                request.settings(Settings.builder()
+                    .put("index.knn", true)
+                );
+                Map<String, Object> properties = new HashMap<>();
+                properties.put("book_id", Collections.singletonMap("type", "integer"));
+                properties.put("title", Collections.singletonMap("type", "text"));
+                properties.put("author", Collections.singletonMap("type", "text"));
+                properties.put("language", Collections.singletonMap("type", "keyword"));
+                properties.put("average_rating", Collections.singletonMap("type", "float"));
+                properties.put("ratings_count", Collections.singletonMap("type", "integer"));
+                properties.put("publication_date", Collections.singletonMap("type", "keyword"));
+                properties.put("format", Collections.singletonMap("type", "keyword"));
+                properties.put("publisher", Collections.singletonMap("type", "keyword"));
+                properties.put("description", Collections.singletonMap("type", "text"));
+                properties.put("image_url", Collections.singletonMap("type", "keyword"));
+                properties.put("shelves", Collections.singletonMap("type", "keyword"));
+                Map<String, Object> embedding = new HashMap<>();
+                embedding.put("type", "knn_vector");
+                embedding.put("dimension", EMBEDDING_DIM);
+                properties.put("embedding", embedding);
+                Map<String, Object> mapping = new HashMap<>();
+                mapping.put("properties", properties);
+                request.mapping(mapper.writeValueAsString(mapping), XContentType.JSON);
+                CreateIndexResponse createIndexResponse = client.indices().create(request, RequestOptions.DEFAULT);
+                if (createIndexResponse.isAcknowledged()) {
+                    System.out.println("Index '" + INDEX + "' created with vector mapping.");
+                }
+            }
+        } catch (IOException e) {
+            System.err.println("Error creating index: " + e.getMessage());
+        }
+    }
+
     public void createFromFile(String filePath) {
+        createIndexIfNotExists();
         try {
             byte[] jsonData = Files.readAllBytes(Paths.get(filePath));
             JsonNode rootNode = mapper.readTree(jsonData);
             if (rootNode.isArray()) {
+                BulkRequest bulkRequest = new BulkRequest();
                 int docId = 1;
                 for (JsonNode node : rootNode) {
                     IndexRequest indexRequest = new IndexRequest(INDEX)
                         .id(String.valueOf(docId++))
                         .source(mapper.writeValueAsString(node), XContentType.JSON);
-                    client.index(indexRequest, RequestOptions.DEFAULT);
+                    bulkRequest.add(indexRequest);
                 }
-                System.out.println("Indexed " + (docId-1) + " documents from " + filePath);
+                BulkResponse bulkResponse = client.bulk(bulkRequest, RequestOptions.DEFAULT);
+                if (!bulkResponse.hasFailures()) {
+                    System.out.println("Indexed " + (docId-1) + " documents from " + filePath);
+                } else {
+                    System.err.println("Bulk indexing had failures: " + bulkResponse.buildFailureMessage());
+                }
             }
         } catch (IOException e) {
             System.err.println("Error indexing documents: " + e.getMessage());
@@ -63,6 +124,7 @@ public class BookCrudApp {
     }
 
     public void createDocument(String id, String json) {
+        createIndexIfNotExists();
         try {
             IndexRequest request = new IndexRequest(INDEX).id(id).source(json, XContentType.JSON);
             IndexResponse response = client.index(request, RequestOptions.DEFAULT);
@@ -123,6 +185,10 @@ public class BookCrudApp {
     }
 
     public void searchBooks(String field, String value) {
+        if (!isSearchableField(field)) {
+            System.out.println("Invalid field. Use 'author' or 'title'.");
+            return;
+        }
         try {
             SearchRequest searchRequest = new SearchRequest(INDEX);
             SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
@@ -138,12 +204,52 @@ public class BookCrudApp {
         }
     }
 
-    public void runCrudMenu() {
-        Scanner scanner = new Scanner(System.in);
+    private boolean isSearchableField(String field) {
+        for (String f : SEARCHABLE_FIELDS) {
+            if (f.equals(field)) return true;
+        }
+        return false;
+    }
+
+    public void vectorSearch(float[] queryVector, int k) {
+        if (queryVector == null || queryVector.length != EMBEDDING_DIM) {
+            System.err.println("Query vector must be of length " + EMBEDDING_DIM);
+            return;
+        }
         try {
+            SearchRequest searchRequest = new SearchRequest(INDEX);
+            SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
+            StringBuilder vectorBuilder = new StringBuilder("[");
+            for (int i = 0; i < queryVector.length; i++) {
+                vectorBuilder.append(queryVector[i]);
+                if (i < queryVector.length - 1) vectorBuilder.append(",");
+            }
+            vectorBuilder.append("]");
+            String knnQuery = "{" +
+                "  \"knn\": {" +
+                "    \"embedding\": {" +
+                "      \"vector\": " + vectorBuilder.toString() + "," +
+                "      \"k\": " + k +
+                "    }" +
+                "  }" +
+                "}";
+            searchSourceBuilder.query(new org.opensearch.index.query.WrapperQueryBuilder(knnQuery));
+            searchRequest.source(searchSourceBuilder);
+            SearchResponse searchResponse = client.search(searchRequest, RequestOptions.DEFAULT);
+            System.out.println("Vector search results:");
+            for (SearchHit hit : searchResponse.getHits().getHits()) {
+                System.out.println(hit.getId() + ": " + hit.getSourceAsString());
+            }
+        } catch (IOException e) {
+            System.err.println("Error in vector search: " + e.getMessage());
+        }
+    }
+
+    public void runCrudMenu() {
+        try (Scanner scanner = new Scanner(System.in)) {
             while (true) {
                 System.out.println("\nCRUD Menu:");
-                System.out.println("1. Bulk create from data.json");
+                System.out.println("1. Bulk create from books.json");
                 System.out.println("2. Create document");
                 System.out.println("3. Read document");
                 System.out.println("4. Update document");
@@ -155,7 +261,7 @@ public class BookCrudApp {
                 String choice = scanner.nextLine();
                 switch (choice) {
                     case "1":
-                        createFromFile("data.json");
+                        createFromFile("books.json");
                         break;
                     case "2":
                         System.out.print("Enter document id: ");
@@ -187,23 +293,18 @@ public class BookCrudApp {
                     case "7":
                         System.out.print("Search by (author/title): ");
                         String field = scanner.nextLine();
-                        if (!field.equals("author") && !field.equals("title")) {
-                            System.out.println("Invalid field. Use 'author' or 'title'.");
-                            break;
-                        }
                         System.out.print("Enter search value: ");
                         String value = scanner.nextLine();
                         searchBooks(field, value);
                         break;
                     case "0":
                         System.out.println("Exiting...");
+                        close();
                         return;
                     default:
                         System.out.println("Invalid option.");
                 }
             }
-        } finally {
-            scanner.close();
         }
     }
 }

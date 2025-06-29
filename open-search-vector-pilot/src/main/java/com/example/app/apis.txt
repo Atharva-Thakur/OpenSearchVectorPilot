@@ -1,0 +1,85 @@
+curl -XPUT "http://localhost:9200/vector-books-index" -H 'Content-Type: application/json' -d'
+{
+  "settings": {
+    "index.knn": true
+  },
+  "mappings": {
+    "properties": {
+      "embedding": {
+        "type": "knn_vector",
+        "dimension": 384,
+        "space_type": "l2"
+      },
+      "book_id": { "type": "integer" },
+      "title": { "type": "text" },
+      "author": { "type": "text" },
+      "author_id": { "type": "integer" },
+      "work_id": { "type": "integer" },
+      "language": { "type": "keyword" },
+      "average_rating": { "type": "float" },
+      "ratings_count": { "type": "integer" },
+      "publication_date": { "type": "keyword" },
+      "original_publication_date": { "type": "keyword" },
+      "format": { "type": "keyword" },
+      "edition_information": { "type": "keyword" },
+      "publisher": { "type": "keyword" },
+      "num_pages": { "type": "float" },
+      "series_name": { "type": "keyword" },
+      "series_position": { "type": "keyword" },
+      "description": { "type": "text" },
+      "image_url": { "type": "keyword" },
+      "shelves": { "type": "keyword" },
+      "rating_distribution": { "type": "object" }
+    }
+  }
+}
+'
+
+
+
+curl -XPOST "http://localhost:9200/vector-books-index/_doc/2" -H 'Content-Type: application/json' -d'
+{'book_id': 2,
+ 'title': 'Harry Potter and the Order of the Phoenix (Harry Potter, #5)',
+ 'author': 'J.K. Rowling',
+ 'author_id': 1077326,
+ 'work_id': 2809203,
+ 'language': 'eng',
+ 'average_rating': 4.5,
+ 'ratings_count': 2628006,
+ 'publication_date': '2004-09',
+ 'original_publication_date': '2003-06-21',
+ 'format': 'Paperback',
+ 'edition_information': 'US Edition',
+ 'publisher': 'Scholastic Inc.',
+ 'num_pages': 870.0,
+ 'series_name': 'Harry Potter',
+ 'series_position': '5',
+ 'description': 'There is a door at the end of a silent corridor. And it’s haunting Harry Pottter’s dreams. Why else would he be waking in the middle of the night, screaming in terror?<br /><br />Harry has a lot on his mind for this, his fifth year at Hogwarts: a Defense Against the Dark Arts teacher with a personality like poisoned honey; a big surprise on the Gryffindor Quidditch team; and the looming terror of the Ordinary Wizarding Level exams. But all these things pale next to the growing threat of He-Who-Must-Not-Be-Named - a threat that neither the magical government nor the authorities at Hogwarts can stop.<br /><br />As the grasp of darkness tightens, Harry must discover the true depth and strength of his friends, the importance of boundless loyalty, and the shocking price of unbearable sacrifice.<br /><br />His fate depends on them all.',
+ 'image_url': 'https://i.gr-assets.com/images/S/compressed.photo.goodreads.com/books/1546910265l/2._SX98_.jpg',
+ 'shelves': "['to-read', 'currently-reading', 'fantasy', 'favorites', 'young-adult', 'fiction', 'harry-potter', 'books-i-own', 'owned', 'ya', 'series', 'favourites', 'magic', 'childrens', 're-read', 'owned-books', 'adventure', 'audiobook', 'children', 'audiobooks', 'middle-grade', 'childhood', 'j-k-rowling', 'my-books', 'classics', 'reread', 'children-s', 'sci-fi-fantasy', 'all-time-favorites', '5-stars', 'default', 'fantasy', 'my-library', 'novels', 'ya-fantasy', 'children-s-books', 'favorite-books', 'kids', 'i-own', 'fantasy-sci-fi', 'favorite', 'audio', 'library', 'english', 'read-more-than-once', 'urban-fantasy', 'paranormal', 'books', 're-reads', 'witches', 'teen', 'british', 'jk-rowling', 'bookshelf', 'ya-fiction', 'novel', 'mystery', 'my-bookshelf', 'kindle', 'childrens-books', 'read-in-2017', 'harry-potter-series', 'read-in-2020', 'on-my-shelf', 'read-in-2016', 'own-it', 'faves', 'rereads', 'my-favorites', 'supernatural', 'read-in-2019', 'read-in-2018', 'audible', 'childhood-favorites', 'audio-books', 'young-adult-fiction', 'scifi-fantasy', 'ebook', 'fantasia', 'youth', 'coming-of-age', '5-star', 'favorite-series', 'favourite', 'all-time-favourites', 'hp', 'wizards', 'favs', 'childhood-books', 'kids-books', 'made-me-cry', 'tbr', 'kindle-unlimited', 'juvenile', 'read-in-2015', 'have', 'read-in-english', 'fantasy-scifi', 'read-2020', 'favoritos']",
+ 'rating_distribution': "{'5': 1674064, '4': 664833, '3': 231195, '2': 41699, '1': 16215, 'total': 2628006}",
+ 'embedding': [-0.01680680923163891,
+  0.029008671641349792,
+  ...]}
+'
+
+
+
+
+curl -XPOST "http://localhost:9200/vector-books-index/_search" -H 'Content-Type: application/json' -d'
+{
+  "size": 3,
+  "query": {
+    "knn": {
+      "embedding": {
+        "vector": [-0.01680680923163891,
+  0.029008671641349792,
+  0.03681858628988266,
+  0.00908788200467825,
+  ...],
+        "k": 3
+      }
+    }
+  }
+}
+'
