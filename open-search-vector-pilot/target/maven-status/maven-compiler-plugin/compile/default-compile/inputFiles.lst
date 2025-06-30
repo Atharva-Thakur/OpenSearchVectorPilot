@@ -1,2 +1,6 @@
 /workspaces/OpenSearchVectorPilot/open-search-vector-pilot/src/main/java/com/example/app/App.java
 /workspaces/OpenSearchVectorPilot/open-search-vector-pilot/src/main/java/com/example/app/BookCrudApp.java
+/workspaces/OpenSearchVectorPilot/open-search-vector-pilot/src/main/java/com/example/app/BookCrudSpringBootApp.java
+/workspaces/OpenSearchVectorPilot/open-search-vector-pilot/src/main/java/com/example/app/config/OnnxConfig.java
+/workspaces/OpenSearchVectorPilot/open-search-vector-pilot/src/main/java/com/example/app/controller/BookController.java
+/workspaces/OpenSearchVectorPilot/open-search-vector-pilot/src/main/java/com/example/app/service/BookService.java
