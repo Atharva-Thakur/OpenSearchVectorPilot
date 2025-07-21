@@ -38,14 +38,14 @@ import org.springframework.ai.embedding.EmbeddingModel;
 @Service
 public class BookService {
     private static final String INDEX = "vector-books-index";
-    private static final int EMBEDDING_DIM = 384;
+    private static final int EMBEDDING_DIM = 1536;
     private static final String[] SEARCHABLE_FIELDS = {"author", "title"};
     private final RestHighLevelClient client;
     private final ObjectMapper mapper = JsonMapper.builder()
                 .enable(JsonReadFeature.ALLOW_NON_NUMERIC_NUMBERS)
                 .build();
     @Autowired
-    private EmbeddingModel embeddingModel;
+    private EmbeddingModel embeddingModel; // Spring AI Azure OpenAI embedding model
 
     public BookService() {
         this.client = new RestHighLevelClient(
@@ -62,6 +62,16 @@ public class BookService {
                 BulkRequest bulkRequest = new BulkRequest();
                 int docId = 1;
                 for (JsonNode node : rootNode) {
+                    // Compose text for embedding
+                    String text = (node.has("description") ? node.get("description").asText("") : "") +
+                                  (node.has("title") ? " " + node.get("title").asText("") : "") +
+                                  (node.has("author") ? " " + node.get("author").asText("") : "");
+                    List<Float> embedding = getEmbedding(text);
+                    com.fasterxml.jackson.databind.node.ArrayNode embeddingArray = mapper.createArrayNode();
+                    for (Float v : embedding) {
+                        embeddingArray.add(v);
+                    }
+                    ((com.fasterxml.jackson.databind.node.ObjectNode) node).set("embedding", embeddingArray);
                     IndexRequest indexRequest = new IndexRequest(INDEX)
                         .id(String.valueOf(docId++))
                         .source(mapper.writeValueAsString(node), XContentType.JSON);
@@ -83,7 +93,18 @@ public class BookService {
     public String createDocument(String id, String json) {
         createIndexIfNotExists();
         try {
-            IndexRequest request = new IndexRequest(INDEX).id(id).source(json, XContentType.JSON);
+            JsonNode node = mapper.readTree(json);
+            String text = (node.has("description") ? node.get("description").asText("") : "") +
+                         (node.has("title") ? " " + node.get("title").asText("") : "") +
+                         (node.has("author") ? " " + node.get("author").asText("") : "");
+            List<Float> embedding = getEmbedding(text);
+            System.out.println("Embedding for text: " + text + " is " + embedding);
+            com.fasterxml.jackson.databind.node.ArrayNode embeddingArray = mapper.createArrayNode();
+            for (Float v : embedding) {
+                embeddingArray.add(v);
+            }
+            ((com.fasterxml.jackson.databind.node.ObjectNode) node).set("embedding", embeddingArray);
+            IndexRequest request = new IndexRequest(INDEX).id(id).source(mapper.writeValueAsString(node), XContentType.JSON);
             IndexResponse response = client.index(request, RequestOptions.DEFAULT);
             return "Created document with id: " + response.getId();
         } catch (IOException e) {
@@ -107,12 +128,60 @@ public class BookService {
 
     public String updateDocument(String id, String json) {
         try {
-            UpdateRequest request = new UpdateRequest(INDEX, id).doc(json, XContentType.JSON);
+            JsonNode node = mapper.readTree(json);
+            String text = (node.has("description") ? node.get("description").asText("") : "") +
+                         (node.has("title") ? " " + node.get("title").asText("") : "") +
+                         (node.has("author") ? " " + node.get("author").asText("") : "");
+            List<Float> embedding = getEmbedding(text);
+            com.fasterxml.jackson.databind.node.ArrayNode embeddingArray = mapper.createArrayNode();
+            for (Float v : embedding) {
+                embeddingArray.add(v);
+            }
+            ((com.fasterxml.jackson.databind.node.ObjectNode) node).set("embedding", embeddingArray);
+            UpdateRequest request = new UpdateRequest(INDEX, id).doc(mapper.writeValueAsString(node), XContentType.JSON);
             client.update(request, RequestOptions.DEFAULT);
             return "Updated document with id: " + id;
         } catch (IOException e) {
             return "Error updating document: " + e.getMessage();
         }
+    }
+
+    // Helper method to get embedding using Spring AI
+    private List<Float> getEmbedding(String text) {
+        try {
+            System.out.println("getEmbedding called with text: " + text);
+            List<?> result = embeddingModel.embed(List.of(text));
+            System.out.println("embeddingModel.embed result: " + result);
+            if (result != null && !result.isEmpty()) {
+                Object arr = result.get(0);
+                System.out.println("First element of result: " + arr + ", type: " + (arr != null ? arr.getClass().getName() : "null"));
+                if (arr instanceof float[]) {
+                    float[] floatArr = (float[]) arr;
+                    System.out.println("float[] length: " + floatArr.length);
+                    List<Float> floatList = new ArrayList<>(floatArr.length);
+                    for (float v : floatArr) floatList.add(v);
+                    System.out.println("Returning floatList: " + floatList);
+                    return floatList;
+                } else if (arr instanceof List<?>) {
+                    // Some models return List<Double>
+                    List<?> list = (List<?>) arr;
+                    System.out.println("List<?> size: " + list.size());
+                    List<Float> floatList = new ArrayList<>(list.size());
+                    for (Object v : list) floatList.add(((Number) v).floatValue());
+                    System.out.println("Returning floatList: " + floatList);
+                    return floatList;
+                } else {
+                    System.out.println("Unknown embedding type: " + arr.getClass().getName());
+                }
+            } else {
+                System.out.println("Embedding result is null or empty");
+            }
+        } catch (Exception e) {
+            System.out.println("Exception in getEmbedding: " + e.getMessage());
+            e.printStackTrace();
+        }
+        System.out.println("Returning empty embedding list");
+        return Collections.emptyList();
     }
 
     public String deleteDocument(String id) {
@@ -209,7 +278,7 @@ public class BookService {
             if (!exists) {
                 CreateIndexRequest request = new CreateIndexRequest(INDEX);
                 request.settings(Settings.builder()
-                    .put("index.knn", false) // Not needed for dense_vector
+                    .put("index.knn", true) // Enable k-NN for vector search
                 );
                 Map<String, Object> properties = new HashMap<>();
                 properties.put("book_id", Collections.singletonMap("type", "integer"));
@@ -225,8 +294,10 @@ public class BookService {
                 properties.put("image_url", Collections.singletonMap("type", "keyword"));
                 properties.put("shelves", Collections.singletonMap("type", "keyword"));
                 Map<String, Object> embedding = new HashMap<>();
-                embedding.put("type", "dense_vector");
-                embedding.put("dims", EMBEDDING_DIM);
+                embedding.put("type", "knn_vector");
+                embedding.put("dimension", EMBEDDING_DIM);
+                embedding.put("index", true); // Enable indexing for vector field
+                embedding.put("similarity", "cosine"); // Use cosine similarity
                 properties.put("embedding", embedding);
                 Map<String, Object> mapping = new HashMap<>();
                 mapping.put("properties", properties);

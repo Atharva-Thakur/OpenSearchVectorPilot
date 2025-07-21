@@ -1,6 +1,5 @@
-com/example/app/config/OnnxConfig.class
-com/example/app/service/BookService.class
-com/example/app/BookCrudApp.class
 com/example/app/BookCrudSpringBootApp.class
 com/example/app/controller/BookController.class
+com/example/app/BookCrudApp.class
+com/example/app/service/BookService.class
 com/example/app/App.class

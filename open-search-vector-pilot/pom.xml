@@ -47,7 +47,7 @@
     </dependency>
     <dependency>
         <groupId>org.springframework.ai</groupId>
-        <artifactId>spring-ai-starter-model-transformers</artifactId>
+        <artifactId>spring-ai-starter-model-azure-openai</artifactId>
         <version>LATEST</version>
     </dependency>
     <dependency>
